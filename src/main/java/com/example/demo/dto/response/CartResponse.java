@@ -14,7 +14,7 @@ public class CartResponse {
     @Data
     @Builder
     public static class CartItemDTO {
-        private Long merchantProductId;
+        private String merchantProductId;
         private Integer quantity;
         private Double price;
         private Double subTotal;

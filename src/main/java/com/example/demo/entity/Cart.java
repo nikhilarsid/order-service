@@ -19,6 +19,7 @@ public class Cart {
     @Column(unique = true, nullable = false)
     private Long userId;
 
+    @Builder.Default
     @OneToMany(mappedBy = "cart", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<CartItem> items = new ArrayList<>();
 
