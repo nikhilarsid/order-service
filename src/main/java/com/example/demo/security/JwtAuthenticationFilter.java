@@ -33,24 +33,39 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         try {
             jwt = authHeader.substring(7);
             userEmail = jwtService.extractUsername(jwt);
-            // Changed to String to match MongoDB ID format
             String userId = jwtService.extractUserId(jwt);
+            // ✅ NEW: Extract the role
+            String rawRole = jwtService.extractRole(jwt);
 
             if (userEmail != null && SecurityContextHolder.getContext().getAuthentication() == null) {
                 if (jwtService.isTokenValid(jwt, userEmail)) {
-                    User user = User.builder().id(userId).email(userEmail).build();
-                    UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(user, null, user.getAuthorities());
+
+                    // ✅ NEW: Critical Role Formatting
+                    String formattedRole = (rawRole != null && rawRole.startsWith("ROLE_"))
+                            ? rawRole
+                            : "ROLE_" + rawRole;
+
+                    // Update your User object with the role
+                    User user = User.builder()
+                            .id(userId)
+                            .email(userEmail)
+                            .role(rawRole) // Ensure User entity has a role field
+                            .build();
+
+                    // ✅ FIX: Pass the formatted role to Spring Security
+                    UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
+                            user,
+                            null,
+                            java.util.Collections.singletonList(new org.springframework.security.core.authority.SimpleGrantedAuthority(formattedRole))
+                    );
+
                     authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(authToken);
                 }
             }
         } catch (Exception e) {
-            // Log the error but don't crash.
-            // This allows the request to proceed as "Anonymous", which will result in 403 Forbidden
-            // if the endpoint requires auth.
             System.err.println("JWT Processing Failed: " + e.getMessage());
         }
-
         filterChain.doFilter(request, response);
     }
 }

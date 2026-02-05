@@ -26,11 +26,11 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .csrf(csrf -> csrf.disable())
-                // ✅ ADDED: CORS (Vital for React Frontend)
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-
                 .authorizeHttpRequests(auth -> auth
-                        // Orders are private: Users must be logged in to create or view them
+                        // ✅ FIX 1: Added missing dots and corrected authority names
+                        // Using hasAnyAuthority requires the exact string stored in the SecurityContext
+                        .requestMatchers("/api/v1/orders/merchant/**").hasAnyAuthority("ROLE_MERCHANT", "ROLE_ADMIN")
                         .anyRequest().authenticated()
                 )
                 .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -39,20 +39,12 @@ public class SecurityConfig {
         return http.build();
     }
 
-    // ✅ ADDED: Standard CORS Bean
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-
-        // Allow your React Frontend
         configuration.setAllowedOrigins(List.of("http://localhost:5173", "http://localhost:5174", "http://localhost:3001"));
-
-        // Allow standard methods (POST to create order, GET to list them)
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-
-        // Allow Authorization header
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type"));
-
         configuration.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

@@ -15,4 +15,5 @@ public class RestTemplateConfig {
         restTemplate.setInterceptors(Collections.singletonList(new RestTemplateLoggingInterceptor()));
         return restTemplate;
     }
+
 }

@@ -31,9 +31,10 @@ public class CartService {
     public void addToCart(AddToCartRequest request) {
         User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
         Double verifiedPrice = null;
-        Integer availableStock = 0; // Track available stock
+        Integer availableStock = 0;
 
         try {
+            // Build URL to verify product details with the Product Service
             String url = UriComponentsBuilder.fromHttpUrl(PRODUCT_SERVICE_URL + request.getProductId())
                     .queryParam("variantId", request.getVariantId())
                     .toUriString();
@@ -43,6 +44,7 @@ public class CartService {
             headers.set("User-Agent", "Mozilla/5.0");
             HttpEntity<String> entity = new HttpEntity<>(headers);
 
+            // Fetch product data including seller-specific details
             ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
                     url, HttpMethod.GET, entity, new ParameterizedTypeReference<Map<String, Object>>() {}
             );
@@ -54,9 +56,9 @@ public class CartService {
                     List<Map<String, Object>> sellers = (List<Map<String, Object>>) productData.get("sellers");
                     if (sellers != null) {
                         for (Map<String, Object> seller : sellers) {
+                            // Match the request's merchantId with available sellers to verify price and stock
                             if (request.getMerchantId().equalsIgnoreCase(seller.get("merchantId").toString())) {
                                 verifiedPrice = Double.valueOf(seller.get("price").toString());
-                                // Extract stock from the seller/merchant data
                                 availableStock = Integer.valueOf(seller.get("stock").toString());
                                 break;
                             }
@@ -72,7 +74,7 @@ public class CartService {
             throw new RuntimeException("Could not find merchant for the selected product/variant.");
         }
 
-        // Check if item already exists in cart to calculate total requested quantity
+        // Check if the item already exists in the user's cart
         Optional<CartItem> existing = cartItemRepository.findByUserIdAndProductIdAndVariantId(
                 user.getId(), request.getProductId(), request.getVariantId());
 
@@ -81,27 +83,30 @@ public class CartService {
             totalRequestedQuantity += existing.get().getQuantity();
         }
 
-        // Stock Validation
+        // Validate requested quantity against available stock
         if (totalRequestedQuantity > availableStock) {
             throw new RuntimeException("Stock not available. Only " + availableStock + " items left.");
         }
 
-        // Save or Update Cart
+        // Save new item or update quantity of existing item, ensuring merchantId is persisted
         if (existing.isPresent()) {
             CartItem item = existing.get();
             item.setQuantity(totalRequestedQuantity);
+            // Ensuring the merchantId remains consistent during updates
+            item.setMerchantId(request.getMerchantId());
             cartItemRepository.save(item);
         } else {
             cartItemRepository.save(CartItem.builder()
                     .userId(user.getId())
                     .productId(request.getProductId())
                     .variantId(request.getVariantId())
-                    .merchantId(request.getMerchantId())
+                    .merchantId(request.getMerchantId()) // Correctly persisting merchantId for analytics
                     .quantity(request.getQuantity())
                     .price(verifiedPrice)
                     .build());
         }
     }
+
     @Transactional(readOnly = true)
     public CartResponse getMyCart() {
         User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
@@ -144,6 +149,7 @@ public class CartService {
                     " items. You only have " + item.getQuantity() + " in your cart.");
         }
 
+        // If the full quantity is removed, delete the entry; otherwise, decrement it
         if (quantityToRemove.equals(item.getQuantity())) {
             cartItemRepository.delete(item);
         } else {

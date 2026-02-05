@@ -4,8 +4,7 @@ import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 import java.time.LocalDateTime;
-
-
+// order-service/src/main/java/com/example/demo/entity/CartItem.java
 @Data
 @Builder
 @NoArgsConstructor
@@ -16,17 +15,10 @@ public class CartItem {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-
     private String userId;
     private Integer productId;
     private String variantId;
-    private String merchantId;
+    private String merchantId; // ✅ Ensure this exists
     private Integer quantity;
     private Double price;
-
-    @CreationTimestamp
-    private LocalDateTime createdAt; // New field
-
-    @org.hibernate.annotations.UpdateTimestamp
-    private LocalDateTime updatedAt; // New field
 }
