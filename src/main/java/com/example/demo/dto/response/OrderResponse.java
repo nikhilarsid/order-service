@@ -1,5 +1,6 @@
 package com.example.demo.dto.response;
 
+import com.example.demo.enums.OrderStatus; // Import the enum from the new package
 import lombok.Builder;
 import lombok.Data;
 import java.time.LocalDateTime;
@@ -9,6 +10,6 @@ import java.time.LocalDateTime;
 public class OrderResponse {
     private Long orderId;
     private Double totalAmount;
-    private String status;
+    private OrderStatus status;
     private LocalDateTime orderDate;
 }

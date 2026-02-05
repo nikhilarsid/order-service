@@ -1,167 +1,154 @@
 package com.example.demo.service;
 
 import com.example.demo.dto.request.AddToCartRequest;
+import com.example.demo.dto.response.CartItemDTO;
 import com.example.demo.dto.response.CartResponse;
-import com.example.demo.entity.Cart;
 import com.example.demo.entity.CartItem;
-import com.example.demo.repository.CartRepository;
+import com.example.demo.repository.CartItemRepository;
 import com.example.demo.security.User;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.ParameterizedTypeReference;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.*;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.context.request.ServletRequestAttributes;
+import org.springframework.web.util.UriComponentsBuilder;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class CartService {
 
-    private final CartRepository cartRepository;
+    private final CartItemRepository cartItemRepository;
     private final RestTemplate restTemplate;
 
-    // ✅ FIXED: Points to your live Inventory Service on Render
-    private final String INVENTORY_SERVICE_URL = "https://inventory-q6gj.onrender.com/api/v1/inventory/";
+    private final String PRODUCT_SERVICE_URL = "https://product-service-jzzf.onrender.com/api/v1/products/";
 
     @Transactional
     public void addToCart(AddToCartRequest request) {
-        // 1. Get the currently logged-in user
         User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        Double verifiedPrice = null;
+        Integer availableStock = 0; // Track available stock
 
-        Double verifiedPrice;
-
-        // 2. Call Inventory Service to check Price & Stock
         try {
-            String url = INVENTORY_SERVICE_URL + request.getMerchantProductId();
-            System.out.println("🔍 Calling Inventory Service: " + url);
-
-            // --- 🛡️ SECURITY FIX: Forward the JWT Token ---
-            String jwtToken = null;
-            ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
-            if (attributes != null) {
-                jwtToken = attributes.getRequest().getHeader("Authorization");
-            }
+            String url = UriComponentsBuilder.fromHttpUrl(PRODUCT_SERVICE_URL + request.getProductId())
+                    .queryParam("variantId", request.getVariantId())
+                    .toUriString();
 
             HttpHeaders headers = new HttpHeaders();
-            if (jwtToken != null) {
-                headers.set("Authorization", jwtToken); // Attach the token!
-                System.out.println("🔑 Token forwarded to Inventory Service");
-            }
+            headers.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
+            headers.set("User-Agent", "Mozilla/5.0");
             HttpEntity<String> entity = new HttpEntity<>(headers);
-            // ------------------------------------------------
 
-            // 3. Perform the Request
             ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
-                    url,
-                    HttpMethod.GET,
-                    entity, // Pass the headers (with token) here
-                    new ParameterizedTypeReference<>() {}
+                    url, HttpMethod.GET, entity, new ParameterizedTypeReference<Map<String, Object>>() {}
             );
 
-            Map<String, Object> data = response.getBody();
-
-            // 4. Validate Response
-            if (data == null || !data.containsKey("price")) {
-                System.err.println("❌ Invalid Response from Inventory: " + data);
-                throw new RuntimeException("Price not found for this item");
+            Map<String, Object> body = response.getBody();
+            if (body != null && (Boolean) body.get("success")) {
+                Map<String, Object> productData = (Map<String, Object>) body.get("data");
+                if (productData != null) {
+                    List<Map<String, Object>> sellers = (List<Map<String, Object>>) productData.get("sellers");
+                    if (sellers != null) {
+                        for (Map<String, Object> seller : sellers) {
+                            if (request.getMerchantId().equalsIgnoreCase(seller.get("merchantId").toString())) {
+                                verifiedPrice = Double.valueOf(seller.get("price").toString());
+                                // Extract stock from the seller/merchant data
+                                availableStock = Integer.valueOf(seller.get("stock").toString());
+                                break;
+                            }
+                        }
+                    }
+                }
             }
-
-            // 5. Extract Price Safely (Handles Integer/Double mismatch)
-            Object priceObj = data.get("price");
-            if (priceObj instanceof Integer) {
-                verifiedPrice = ((Integer) priceObj).doubleValue();
-            } else if (priceObj instanceof Double) {
-                verifiedPrice = (Double) priceObj;
-            } else {
-                verifiedPrice = Double.parseDouble(priceObj.toString());
-            }
-
-            System.out.println("✅ Price Verified: " + verifiedPrice);
-
         } catch (Exception e) {
-            System.err.println("❌ Failed to verify price from Inventory Service: " + e.getMessage());
-            // If the call fails (403, 404, or Network), we stop here to prevent "Free Items"
-            throw new RuntimeException("Could not verify item price. " + e.getMessage());
+            throw new RuntimeException("Product Service connection failed: " + e.getMessage());
         }
 
-        // --- Existing Cart Logic (Save to DB) ---
-
-        Cart cart = cartRepository.findByUserId(user.getId())
-                .orElseGet(() -> {
-                    Cart newCart = Cart.builder()
-                            .userId(user.getId())
-                            .items(new ArrayList<>())
-                            .build();
-                    return cartRepository.save(newCart);
-                });
-
-        boolean exists = false;
-        for (CartItem item : cart.getItems()) {
-            // Check if product already exists in cart
-            if (item.getMerchantProductId().equals(request.getMerchantProductId())) {
-                item.setQuantity(item.getQuantity() + request.getQuantity());
-                exists = true;
-                break;
-            }
+        if (verifiedPrice == null) {
+            throw new RuntimeException("Could not find merchant for the selected product/variant.");
         }
 
-        if (!exists) {
-            CartItem newItem = CartItem.builder()
-                    .merchantProductId(request.getMerchantProductId())
+        // Check if item already exists in cart to calculate total requested quantity
+        Optional<CartItem> existing = cartItemRepository.findByUserIdAndProductIdAndVariantId(
+                user.getId(), request.getProductId(), request.getVariantId());
+
+        int totalRequestedQuantity = request.getQuantity();
+        if (existing.isPresent()) {
+            totalRequestedQuantity += existing.get().getQuantity();
+        }
+
+        // Stock Validation
+        if (totalRequestedQuantity > availableStock) {
+            throw new RuntimeException("Stock not available. Only " + availableStock + " items left.");
+        }
+
+        // Save or Update Cart
+        if (existing.isPresent()) {
+            CartItem item = existing.get();
+            item.setQuantity(totalRequestedQuantity);
+            cartItemRepository.save(item);
+        } else {
+            cartItemRepository.save(CartItem.builder()
+                    .userId(user.getId())
+                    .productId(request.getProductId())
+                    .variantId(request.getVariantId())
+                    .merchantId(request.getMerchantId())
                     .quantity(request.getQuantity())
-                    .price(verifiedPrice) // Use the verified price from Inventory
-                    .build();
-            cart.addItem(newItem);
+                    .price(verifiedPrice)
+                    .build());
         }
-
-        cartRepository.save(cart);
     }
-
-    // ✅ FIX 1: Add Transactional to prevent LazyInitializationException
     @Transactional(readOnly = true)
     public CartResponse getMyCart() {
         User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        List<CartItem> items = cartItemRepository.findByUserId(user.getId());
 
-        // ✅ FIX 2: Handle empty cart gracefully instead of crashing
-        Cart cart = cartRepository.findByUserId(user.getId())
-                .orElse(null);
-
-        if (cart == null || cart.getItems() == null || cart.getItems().isEmpty()) {
-            return CartResponse.builder()
-                    .cartId(cart != null ? cart.getId() : null)
-                    .items(new ArrayList<>())
-                    .totalValue(0.0)
-                    .build();
-        }
-
-        double totalValue = cart.getItems().stream()
-                .mapToDouble(item -> item.getPrice() * item.getQuantity())
+        double total = items.stream()
+                .mapToDouble(i -> i.getPrice() * i.getQuantity())
                 .sum();
 
-        List<CartResponse.CartItemDTO> itemDTOs = cart.getItems().stream()
-                .map(item -> CartResponse.CartItemDTO.builder()
-                        .merchantProductId(item.getMerchantProductId())
-                        .quantity(item.getQuantity())
-                        .price(item.getPrice())
-                        .subTotal(item.getPrice() * item.getQuantity())
+        List<CartItemDTO> itemDTOs = items.stream()
+                .map(i -> CartItemDTO.builder()
+                        .itemId(i.getId())
+                        .merchantProductId(i.getProductId().toString())
+                        .quantity(i.getQuantity())
+                        .price(i.getPrice())
+                        .subTotal(i.getPrice() * i.getQuantity())
                         .build())
                 .collect(Collectors.toList());
 
         return CartResponse.builder()
-                .cartId(cart.getId())
+                .cartId(0L)
+                .totalValue(total)
                 .items(itemDTOs)
-                .totalValue(totalValue)
                 .build();
+    }
+
+    @Transactional
+    public void removeItem(Long itemId, Integer quantityToRemove) {
+        User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+
+        CartItem item = cartItemRepository.findByIdAndUserId(itemId, user.getId())
+                .orElseThrow(() -> new RuntimeException("Item not found in your cart."));
+
+        if (quantityToRemove <= 0) {
+            throw new RuntimeException("Quantity to remove must be greater than 0.");
+        }
+
+        if (quantityToRemove > item.getQuantity()) {
+            throw new RuntimeException("Error: Cannot remove " + quantityToRemove +
+                    " items. You only have " + item.getQuantity() + " in your cart.");
+        }
+
+        if (quantityToRemove.equals(item.getQuantity())) {
+            cartItemRepository.delete(item);
+        } else {
+            item.setQuantity(item.getQuantity() - quantityToRemove);
+            cartItemRepository.save(item);
+        }
     }
 }

@@ -14,11 +14,13 @@ public class OrderItem {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    private String merchantProductId;
+    private Integer productId;
+    private String variantId;
+    private String merchantId;
     private Integer quantity;
     private Double price;
 
     @ManyToOne
-    @JoinColumn(name = "order_id")
+    @JoinColumn(name = "order_id") // Matches order_id in schema
     private Order order;
 }

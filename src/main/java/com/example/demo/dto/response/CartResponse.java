@@ -1,22 +1,14 @@
 package com.example.demo.dto.response;
 
-import lombok.Builder;
-import lombok.Data;
+import lombok.*;
 import java.util.List;
 
 @Data
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class CartResponse {
     private Long cartId;
     private List<CartItemDTO> items;
     private Double totalValue;
-
-    @Data
-    @Builder
-    public static class CartItemDTO {
-        private String merchantProductId;
-        private Integer quantity;
-        private Double price;
-        private Double subTotal;
-    }
 }

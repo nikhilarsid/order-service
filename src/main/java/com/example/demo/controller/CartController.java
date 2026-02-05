@@ -15,14 +15,23 @@ public class CartController {
 
     private final CartService cartService;
 
-    @PostMapping("/add")
+    @PostMapping("/addItem")
     public ResponseEntity<ApiResponse<String>> addToCart(@RequestBody AddToCartRequest request) {
         cartService.addToCart(request);
-        return ResponseEntity.ok(ApiResponse.success(null, "Item added to cart successfully"));
+        return ResponseEntity.ok(ApiResponse.success(null, "Item added to cart"));
     }
 
-    @GetMapping
+    @GetMapping("/view")
     public ResponseEntity<ApiResponse<CartResponse>> viewCart() {
-        return ResponseEntity.ok(ApiResponse.success(cartService.getMyCart(), "Cart retrieved successfully"));
+        return ResponseEntity.ok(ApiResponse.success(cartService.getMyCart(), "Cart retrieved"));
+    }
+
+    @DeleteMapping("/deleteItem/{itemId}")
+    public ResponseEntity<ApiResponse<String>> deleteItem(
+            @PathVariable Long itemId,
+            @RequestParam Integer quantity) {
+
+        cartService.removeItem(itemId, quantity);
+        return ResponseEntity.ok(ApiResponse.success(null, "Cart updated successfully"));
     }
 }

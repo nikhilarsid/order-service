@@ -30,18 +30,27 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
-        jwt = authHeader.substring(7);
-        userEmail = jwtService.extractUsername(jwt);
-        Long userId = jwtService.extractUserId(jwt);
+        try {
+            jwt = authHeader.substring(7);
+            userEmail = jwtService.extractUsername(jwt);
+            // Changed to String to match MongoDB ID format
+            String userId = jwtService.extractUserId(jwt);
 
-        if (userEmail != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-            if (jwtService.isTokenValid(jwt, userEmail)) {
-                User user = User.builder().id(userId).email(userEmail).build();
-                UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(user, null, user.getAuthorities());
-                authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                SecurityContextHolder.getContext().setAuthentication(authToken);
+            if (userEmail != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+                if (jwtService.isTokenValid(jwt, userEmail)) {
+                    User user = User.builder().id(userId).email(userEmail).build();
+                    UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(user, null, user.getAuthorities());
+                    authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                    SecurityContextHolder.getContext().setAuthentication(authToken);
+                }
             }
+        } catch (Exception e) {
+            // Log the error but don't crash.
+            // This allows the request to proceed as "Anonymous", which will result in 403 Forbidden
+            // if the endpoint requires auth.
+            System.err.println("JWT Processing Failed: " + e.getMessage());
         }
+
         filterChain.doFilter(request, response);
     }
 }

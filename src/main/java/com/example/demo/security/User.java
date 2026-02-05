@@ -14,7 +14,7 @@ import java.util.Collections;
 @NoArgsConstructor
 @AllArgsConstructor
 public class User implements UserDetails {
-    private Long id;
+    private String id;
     private String email;
 
     @Override
