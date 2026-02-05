@@ -119,6 +119,9 @@ public class CartService {
         List<CartItemDTO> itemDTOs = items.stream()
                 .map(i -> CartItemDTO.builder()
                         .itemId(i.getId())
+                        .productId(i.getProductId())   // ✅ Map this
+                        .variantId(i.getVariantId())     // ✅ Map this
+                        .merchantId(i.getMerchantId())   // ✅ Map this
                         .merchantProductId(i.getProductId().toString())
                         .quantity(i.getQuantity())
                         .price(i.getPrice())
@@ -132,7 +135,6 @@ public class CartService {
                 .items(itemDTOs)
                 .build();
     }
-
     @Transactional
     public void removeItem(Long itemId, Integer quantityToRemove) {
         User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();

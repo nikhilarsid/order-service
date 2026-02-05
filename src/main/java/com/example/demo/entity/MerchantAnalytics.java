@@ -1,3 +1,8 @@
+package com.example.demo.entity;
+
+import jakarta.persistence.*; // For JPA annotations
+import lombok.*;            // For Lombok annotations
+
 @Entity
 @Table(name = "merchant_analytics")
 @Data
