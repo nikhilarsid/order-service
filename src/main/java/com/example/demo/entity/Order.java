@@ -21,6 +21,8 @@ public class Order {
     private Long id;
 
     private String userId;
+    private String orderNumber;
+    private LocalDateTime orderDate;
     private Double totalAmount;
 
     @Enumerated(EnumType.STRING)

@@ -1,20 +1,19 @@
 package com.example.demo.dto.response;
 
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
-import java.time.LocalDateTime;
+import lombok.NoArgsConstructor;
 
 @Data
 @Builder
-public class OrderItemDetailResponse {
-    private Long id;
-    private Long orderId;
+@NoArgsConstructor
+@AllArgsConstructor
+public class OrderItemDto {
     private Integer productId;
     private String variantId;
-    private String merchantId;
     private String merchantName;
     private Integer quantity;
     private Double price;
     private String imageUrl;
-    private LocalDateTime orderDate;
 }

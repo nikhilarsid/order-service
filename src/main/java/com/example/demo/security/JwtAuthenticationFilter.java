@@ -5,16 +5,20 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j; // ✅ Add this
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.Collections;
 
 @Component
 @RequiredArgsConstructor
+@Slf4j // ✅ Enable Logging
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
@@ -25,7 +29,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         final String jwt;
         final String userEmail;
 
+        // ✅ LOG 1: Prove the request hit the server
+        log.info("🛡️ [FILTER] Request Received: {} {}", request.getMethod(), request.getRequestURI());
+
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            log.warn("⚠️ [FILTER] No valid Authorization header found. Proceeding as Anonymous.");
             filterChain.doFilter(request, response);
             return;
         }
@@ -33,38 +41,34 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         try {
             jwt = authHeader.substring(7);
             userEmail = jwtService.extractUsername(jwt);
-            String userId = jwtService.extractUserId(jwt);
-            // ✅ NEW: Extract the role
             String rawRole = jwtService.extractRole(jwt);
+
+            log.info("👤 [FILTER] Token Decoded. User: {}, Role: {}", userEmail, rawRole);
 
             if (userEmail != null && SecurityContextHolder.getContext().getAuthentication() == null) {
                 if (jwtService.isTokenValid(jwt, userEmail)) {
 
-                    // ✅ NEW: Critical Role Formatting
                     String formattedRole = (rawRole != null && rawRole.startsWith("ROLE_"))
                             ? rawRole
                             : "ROLE_" + rawRole;
 
-                    // Update your User object with the role
-                    User user = User.builder()
-                            .id(userId)
-                            .email(userEmail)
-                            .role(rawRole) // Ensure User entity has a role field
-                            .build();
+                    log.info("✅ [FILTER] Authenticating User with Authority: {}", formattedRole);
 
-                    // ✅ FIX: Pass the formatted role to Spring Security
+                    User user = User.builder().email(userEmail).role(rawRole).build();
+
                     UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
                             user,
                             null,
-                            java.util.Collections.singletonList(new org.springframework.security.core.authority.SimpleGrantedAuthority(formattedRole))
+                            Collections.singletonList(new SimpleGrantedAuthority(formattedRole))
                     );
-
                     authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(authToken);
+                } else {
+                    log.error("❌ [FILTER] Token validation failed.");
                 }
             }
         } catch (Exception e) {
-            System.err.println("JWT Processing Failed: " + e.getMessage());
+            log.error("❌ [FILTER] JWT Error: {}", e.getMessage());
         }
         filterChain.doFilter(request, response);
     }

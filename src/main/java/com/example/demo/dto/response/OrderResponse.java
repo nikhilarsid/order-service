@@ -1,15 +1,21 @@
 package com.example.demo.dto.response;
 
-import com.example.demo.enums.OrderStatus; // Import the enum from the new package
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class OrderResponse {
     private Long orderId;
-    private Double totalAmount;
-    private OrderStatus status;
+    private String orderNumber;
     private LocalDateTime orderDate;
+    private Double totalAmount;
+    private String status;
+    private List<OrderItemDto> items;
 }

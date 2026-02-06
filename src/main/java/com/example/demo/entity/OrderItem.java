@@ -17,10 +17,17 @@ public class OrderItem {
     private Integer productId;
     private String variantId;
     private String merchantId;
+
+    // ✅ NEW: Store the readable merchant name
+    private String merchantName;
+
     private Integer quantity;
     private Double price;
 
+    @Column(name = "image_url", length = 1000)
+    private String imageUrl;
+
     @ManyToOne
-    @JoinColumn(name = "order_id") // Matches order_id in schema
+    @JoinColumn(name = "order_id")
     private Order order;
 }

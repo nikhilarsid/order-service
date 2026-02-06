@@ -7,11 +7,13 @@ import com.example.demo.entity.CartItem;
 import com.example.demo.repository.CartItemRepository;
 import com.example.demo.security.User;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.*;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
@@ -20,34 +22,39 @@ import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j // ✅ Enables Logging
 public class CartService {
 
     private final CartItemRepository cartItemRepository;
     private final RestTemplate restTemplate;
 
+    // Ensure this URL is correct (use http://localhost:8095/api/v1/products/ if running locally)
     private final String PRODUCT_SERVICE_URL = "https://product-service-jzzf.onrender.com/api/v1/products/";
 
     @Transactional
     public void addToCart(AddToCartRequest request) {
         User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        log.info("🔹 [SERVICE] User {} adding item to cart...", user.getEmail());
+
         Double verifiedPrice = null;
         Integer availableStock = 0;
 
         try {
-            // Build URL to verify product details with the Product Service
             String url = UriComponentsBuilder.fromHttpUrl(PRODUCT_SERVICE_URL + request.getProductId())
                     .queryParam("variantId", request.getVariantId())
                     .toUriString();
 
+            log.info("🌍 [EXTERNAL CALL] Verifying Product at URL: {}", url);
+
             HttpHeaders headers = new HttpHeaders();
             headers.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
-            headers.set("User-Agent", "Mozilla/5.0");
             HttpEntity<String> entity = new HttpEntity<>(headers);
 
-            // Fetch product data including seller-specific details
             ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
                     url, HttpMethod.GET, entity, new ParameterizedTypeReference<Map<String, Object>>() {}
             );
+
+            log.info("⬅️ [EXTERNAL RESPONSE] Status Code: {}", response.getStatusCode());
 
             Map<String, Object> body = response.getBody();
             if (body != null && (Boolean) body.get("success")) {
@@ -56,55 +63,56 @@ public class CartService {
                     List<Map<String, Object>> sellers = (List<Map<String, Object>>) productData.get("sellers");
                     if (sellers != null) {
                         for (Map<String, Object> seller : sellers) {
-                            // Match the request's merchantId with available sellers to verify price and stock
                             if (request.getMerchantId().equalsIgnoreCase(seller.get("merchantId").toString())) {
                                 verifiedPrice = Double.valueOf(seller.get("price").toString());
                                 availableStock = Integer.valueOf(seller.get("stock").toString());
+                                log.info("✅ [SERVICE] Merchant Found! Price: {}, Stock: {}", verifiedPrice, availableStock);
                                 break;
                             }
                         }
                     }
                 }
             }
+        } catch (HttpClientErrorException e) {
+            log.error("❌ [EXTERNAL ERROR] Product Service returned {} at {}", e.getStatusCode(), PRODUCT_SERVICE_URL);
+            throw new RuntimeException("Product not found or service unavailable.");
         } catch (Exception e) {
-            throw new RuntimeException("Product Service connection failed: " + e.getMessage());
+            log.error("❌ [INTERNAL ERROR] Failed to connect to Product Service: {}", e.getMessage());
+            throw new RuntimeException("System error: Unable to verify product details.");
         }
 
         if (verifiedPrice == null) {
+            log.warn("⚠️ [SERVICE] Merchant ID {} not found for this product.", request.getMerchantId());
             throw new RuntimeException("Could not find merchant for the selected product/variant.");
         }
 
-        // Check if the item already exists in the user's cart
-        Optional<CartItem> existing = cartItemRepository.findByUserIdAndProductIdAndVariantId(
-                user.getId(), request.getProductId(), request.getVariantId());
-
-        int totalRequestedQuantity = request.getQuantity();
-        if (existing.isPresent()) {
-            totalRequestedQuantity += existing.get().getQuantity();
-        }
-
-        // Validate requested quantity against available stock
-        if (totalRequestedQuantity > availableStock) {
+        if (request.getQuantity() > availableStock) {
+            log.warn("⚠️ [SERVICE] Insufficient Stock. Requested: {}, Available: {}", request.getQuantity(), availableStock);
             throw new RuntimeException("Stock not available. Only " + availableStock + " items left.");
         }
 
-        // Save new item or update quantity of existing item, ensuring merchantId is persisted
+        // DB Operations
+        Optional<CartItem> existing = cartItemRepository.findByUserIdAndProductIdAndVariantId(
+                user.getId(), request.getProductId(), request.getVariantId());
+
         if (existing.isPresent()) {
+            log.info("🔄 [DB] Updating existing cart item quantity.");
             CartItem item = existing.get();
-            item.setQuantity(totalRequestedQuantity);
-            // Ensuring the merchantId remains consistent during updates
+            item.setQuantity(item.getQuantity() + request.getQuantity());
             item.setMerchantId(request.getMerchantId());
             cartItemRepository.save(item);
         } else {
+            log.info("➕ [DB] Creating new cart item.");
             cartItemRepository.save(CartItem.builder()
                     .userId(user.getId())
                     .productId(request.getProductId())
                     .variantId(request.getVariantId())
-                    .merchantId(request.getMerchantId()) // Correctly persisting merchantId for analytics
+                    .merchantId(request.getMerchantId())
                     .quantity(request.getQuantity())
                     .price(verifiedPrice)
                     .build());
         }
+        log.info("✅ [SERVICE] Cart updated successfully.");
     }
 
     @Transactional(readOnly = true)
@@ -119,9 +127,9 @@ public class CartService {
         List<CartItemDTO> itemDTOs = items.stream()
                 .map(i -> CartItemDTO.builder()
                         .itemId(i.getId())
-                        .productId(i.getProductId())   // ✅ Map this
-                        .variantId(i.getVariantId())     // ✅ Map this
-                        .merchantId(i.getMerchantId())   // ✅ Map this
+                        .productId(i.getProductId())
+                        .variantId(i.getVariantId())
+                        .merchantId(i.getMerchantId())
                         .merchantProductId(i.getProductId().toString())
                         .quantity(i.getQuantity())
                         .price(i.getPrice())
@@ -135,28 +143,23 @@ public class CartService {
                 .items(itemDTOs)
                 .build();
     }
+
     @Transactional
     public void removeItem(Long itemId, Integer quantityToRemove) {
         User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
 
+        log.info("🗑 [SERVICE] Removing item {} for user {}", itemId, user.getEmail());
+
         CartItem item = cartItemRepository.findByIdAndUserId(itemId, user.getId())
                 .orElseThrow(() -> new RuntimeException("Item not found in your cart."));
 
-        if (quantityToRemove <= 0) {
-            throw new RuntimeException("Quantity to remove must be greater than 0.");
-        }
-
-        if (quantityToRemove > item.getQuantity()) {
-            throw new RuntimeException("Error: Cannot remove " + quantityToRemove +
-                    " items. You only have " + item.getQuantity() + " in your cart.");
-        }
-
-        // If the full quantity is removed, delete the entry; otherwise, decrement it
-        if (quantityToRemove.equals(item.getQuantity())) {
+        if (quantityToRemove >= item.getQuantity()) {
             cartItemRepository.delete(item);
+            log.info("🗑 [DB] Item completely removed.");
         } else {
             item.setQuantity(item.getQuantity() - quantityToRemove);
             cartItemRepository.save(item);
+            log.info("🔻 [DB] Item quantity reduced.");
         }
     }
 }

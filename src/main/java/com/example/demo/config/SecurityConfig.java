@@ -28,9 +28,11 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .authorizeHttpRequests(auth -> auth
-                        // ✅ FIX 1: Added missing dots and corrected authority names
-                        // Using hasAnyAuthority requires the exact string stored in the SecurityContext
-                        .requestMatchers("/api/v1/orders/merchant/**").hasAnyAuthority("ROLE_MERCHANT", "ROLE_ADMIN")
+                        .requestMatchers("/api/orders/merchant/**").hasAnyAuthority("ROLE_MERCHANT", "ROLE_ADMIN")
+
+                        // ✅ ADD THIS LINE: Allow public access to error messages
+                        .requestMatchers("/error").permitAll()
+
                         .anyRequest().authenticated()
                 )
                 .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS))

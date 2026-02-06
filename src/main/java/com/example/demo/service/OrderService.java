@@ -1,160 +1,253 @@
 package com.example.demo.service;
 
+import com.example.demo.dto.response.OrderItemDto;
 import com.example.demo.dto.response.OrderResponse;
-import com.example.demo.dto.response.OrderItemDetailResponse;
-import com.example.demo.entity.*;
+import com.example.demo.dto.response.ProductSnapshot;
+import com.example.demo.entity.CartItem;
+import com.example.demo.entity.Order;
+import com.example.demo.entity.OrderItem;
 import com.example.demo.enums.OrderStatus;
-import com.example.demo.enums.PaymentStatus;
-import com.example.demo.integration.OrderNotificationPublisher;
-import com.example.demo.repository.*;
+import com.example.demo.repository.CartItemRepository;
+import com.example.demo.repository.OrderItemRepository;
+import com.example.demo.repository.OrderRepository;
 import com.example.demo.security.User;
 import lombok.RequiredArgsConstructor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class OrderService {
 
-    private static final Logger log = LoggerFactory.getLogger(OrderService.class);
-
     private final OrderRepository orderRepository;
-    private final CartItemRepository cartItemRepository;
     private final OrderItemRepository orderItemRepository;
-    private final MerchantAnalyticsRepository analyticsRepository;
-    private final OrderNotificationPublisher orderNotificationPublisher;
+    private final CartItemRepository cartItemRepository;
     private final RestTemplate restTemplate;
 
+    @Value("${integration.product-service.url}")
+    private String productServiceUrl;
+
     @Transactional
-    public Long checkout() {
+    public String checkout() {
         User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-        log.info("DIAGNOSTIC: Starting checkout for user: {}", user.getEmail());
+        log.info("🛒 [CHECKOUT] Starting checkout for user: {}", user.getEmail());
 
         List<CartItem> cartItems = cartItemRepository.findByUserId(user.getId());
         if (cartItems.isEmpty()) {
-            log.error("DIAGNOSTIC: Cart is empty for user {}", user.getId());
-            throw new RuntimeException("Cannot place order: Your cart is empty.");
+            log.error("❌ [CHECKOUT] Cart is empty for user: {}", user.getEmail());
+            throw new RuntimeException("Cart is empty");
         }
 
-        double totalAmount = cartItems.stream()
-                .mapToDouble(i -> i.getPrice() * i.getQuantity())
-                .sum();
+        // 1. Initialize Order
+        Order order = new Order();
+        order.setOrderNumber(UUID.randomUUID().toString());
+        order.setUserId(user.getId());
+        order.setOrderDate(LocalDateTime.now());
+        order.setTotalAmount(0.0);
+        order.setStatus(OrderStatus.CONFIRMED);
+        orderRepository.save(order);
 
-        Order order = Order.builder()
-                .userId(user.getId())
-                .totalAmount(totalAmount)
-                .status(OrderStatus.CONFIRMED)
-                .address("Default Address")
-                .paymentStatus(PaymentStatus.PAID)
-                .build();
+        double totalAmount = 0.0;
 
-        // Map CartItems to OrderItems and LOG the data being transferred
-        List<OrderItem> orderItems = cartItems.stream()
-                .map(ci -> {
-                    log.info("DIAGNOSTIC: Processing item - Merchant: {}, Product: {}, Variant: {}",
-                            ci.getMerchantId(), ci.getProductId(), ci.getVariantId());
-                    return OrderItem.builder()
-                            .productId(ci.getProductId())
-                            .variantId(ci.getVariantId())
-                            .merchantId(ci.getMerchantId())
-                            .quantity(ci.getQuantity())
-                            .price(ci.getPrice())
-                            .order(order)
-                            .build();
-                })
-                .collect(Collectors.toList());
+        // 2. Process Each Item
+        for (CartItem cartItem : cartItems) {
+            log.info("🔍 [ITEM CHECK] Processing Item - ProductID: {}, VariantID: {}, MerchantID: {}",
+                    cartItem.getProductId(), cartItem.getVariantId(), cartItem.getMerchantId());
 
-        order.setItems(orderItems);
-        Order savedOrder = orderRepository.save(order);
-        log.info("DIAGNOSTIC: Order saved with ID: {}", savedOrder.getId());
+            // A. Fetch Product Details from Product Service
+            ProductSnapshot productData = fetchProductSnapshot(
+                    cartItem.getProductId(),
+                    cartItem.getVariantId(),
+                    cartItem.getMerchantId()
+            );
 
-        // Update Analytics and Inventory
-        for (OrderItem item : orderItems) {
-            updateMerchantAnalytics(item);
-            updateProductInventory(item);
+            // B. Validate Availability
+            if (productData == null) {
+                log.error("❌ [ITEM FAIL] Product unavailable or Merchant mismatch for ProductID: {}", cartItem.getProductId());
+                throw new RuntimeException("Order failed: Item out of stock or unavailable: " + cartItem.getProductId());
+            }
+
+            if (productData.getStock() < cartItem.getQuantity()) {
+                log.error("❌ [STOCK FAIL] Not enough stock. Requested: {}, Available: {}", cartItem.getQuantity(), productData.getStock());
+                throw new RuntimeException("Insufficient stock for product: " + productData.getName());
+            }
+
+            log.info("✅ [ITEM VALID] Stock OK. Price: {}", productData.getPrice());
+
+            // C. Create Order Item
+            OrderItem orderItem = new OrderItem();
+            orderItem.setOrder(order);
+            orderItem.setProductId(cartItem.getProductId());
+            orderItem.setVariantId(cartItem.getVariantId());
+            orderItem.setMerchantId(cartItem.getMerchantId());
+            orderItem.setQuantity(cartItem.getQuantity());
+            orderItem.setPrice(productData.getPrice());
+            orderItem.setMerchantName(productData.getMerchantName());
+            orderItem.setImageUrl(productData.getImageUrl());
+            orderItemRepository.save(orderItem);
+
+            totalAmount += (productData.getPrice() * cartItem.getQuantity());
+
+            // D. Update Inventory (Call Product Service)
+            updateProductInventory(orderItem);
         }
 
-        cartItemRepository.deleteByUserId(user.getId());
-        log.info("DIAGNOSTIC: Cart cleared for user {}", user.getId());
+        // 3. Finalize Order
+        order.setTotalAmount(totalAmount);
+        orderRepository.save(order);
 
-        orderNotificationPublisher.sendOrderConfirmation(savedOrder, user.getEmail());
-        return savedOrder.getId();
-    }
+        // 4. Clear Cart
+        cartItemRepository.deleteAll(cartItems);
+        log.info("🎉 [CHECKOUT] Order Placed Successfully! Order Number: {}", order.getOrderNumber());
 
-    private void updateMerchantAnalytics(OrderItem item) {
-        if (item.getMerchantId() == null) {
-            log.error("DIAGNOSTIC ERROR: Cannot update analytics. MerchantId is NULL for Product: {}", item.getProductId());
-            return;
-        }
-
-        log.info("DIAGNOSTIC: Updating Analytics table for Merchant: {}", item.getMerchantId());
-
-        MerchantAnalytics stats = analyticsRepository
-                .findByMerchantIdAndProductIdAndVariantId(item.getMerchantId(), item.getProductId(), item.getVariantId())
-                .orElseGet(() -> {
-                    log.info("DIAGNOSTIC: No existing record found for Merchant {}. Creating new entry.", item.getMerchantId());
-                    return MerchantAnalytics.builder()
-                            .merchantId(item.getMerchantId())
-                            .productId(item.getProductId())
-                            .variantId(item.getVariantId())
-                            .amountGenerated(0.0)
-                            .numberOfOrdersSold(0)
-                            .build();
-                });
-
-        stats.setNumberOfOrdersSold(stats.getNumberOfOrdersSold() + item.getQuantity());
-        stats.setAmountGenerated(stats.getAmountGenerated() + (item.getPrice() * item.getQuantity()));
-
-        analyticsRepository.save(stats);
-        log.info("DIAGNOSTIC: Successfully saved MerchantAnalytics for {}", item.getMerchantId());
-    }
-
-    private void updateProductInventory(OrderItem item) {
-        String url = String.format(
-                "https://product-service-jzzf.onrender.com/api/v1/products/inventory/%d?variantId=%s&stock=%d",
-                item.getProductId(),
-                item.getVariantId(),
-                -item.getQuantity()
-        );
-        try {
-            restTemplate.put(url, null);
-            log.info("DIAGNOSTIC: Inventory update sent for Product: {}", item.getProductId());
-        } catch (Exception e) {
-            log.error("DIAGNOSTIC ERROR: Product Service Update failed: {}", e.getMessage());
-        }
-    }
-
-    public List<OrderResponse> getOrderHistory() {
-        User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-        return orderRepository.findByUserIdOrderByCreatedAtDesc(user.getId()).stream()
-                .map(o -> OrderResponse.builder()
-                        .orderId(o.getId())
-                        .totalAmount(o.getTotalAmount())
-                        .status(o.getStatus())
-                        .orderDate(o.getCreatedAt())
-                        .build()).collect(Collectors.toList());
+        return order.getOrderNumber();
     }
 
     @Transactional(readOnly = true)
-    public OrderItemDetailResponse getOrderItemDetail(Long itemId) {
-        OrderItem item = orderItemRepository.findById(itemId)
-                .orElseThrow(() -> new RuntimeException("Order item not found"));
+    public List<OrderResponse> getOrderHistory() {
+        User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        List<Order> orders = orderRepository.findByUserIdOrderByCreatedAtDesc(user.getId());
 
-        return OrderItemDetailResponse.builder()
-                .id(item.getId())
-                .orderId(item.getOrder().getId())
+        return orders.stream().map(this::mapToOrderResponse).collect(Collectors.toList());
+    }
+
+    // ✅ NEW: Added this method to fix your error
+    @Transactional(readOnly = true)
+    public OrderItemDto getOrderItemDetail(Long itemId) {
+        OrderItem item = orderItemRepository.findById(itemId)
+                .orElseThrow(() -> new RuntimeException("Order Item not found"));
+
+        return OrderItemDto.builder()
                 .productId(item.getProductId())
                 .variantId(item.getVariantId())
-                .merchantId(item.getMerchantId())
+                .merchantName(item.getMerchantName())
                 .quantity(item.getQuantity())
                 .price(item.getPrice())
+                .imageUrl(item.getImageUrl())
                 .build();
+    }
+
+    private OrderResponse mapToOrderResponse(Order order) {
+        List<OrderItemDto> orderItems = order.getItems().stream()
+                .map(item -> OrderItemDto.builder()
+                        .productId(item.getProductId())
+                        .variantId(item.getVariantId())
+                        .merchantName(item.getMerchantName())
+                        .quantity(item.getQuantity())
+                        .price(item.getPrice())
+                        .imageUrl(item.getImageUrl())
+                        .build())
+                .collect(Collectors.toList());
+
+        return OrderResponse.builder()
+                .orderId(order.getId())
+                .orderNumber(order.getOrderNumber())
+                .orderDate(order.getOrderDate())
+                .totalAmount(order.getTotalAmount())
+                .status(order.getStatus().toString())
+                .items(orderItems)
+                .build();
+    }
+
+    private ProductSnapshot fetchProductSnapshot(Integer productId, String variantId, String merchantId) {
+        try {
+            String baseUrl = productServiceUrl.endsWith("/") ? productServiceUrl : productServiceUrl + "/";
+            String url = baseUrl + productId + "?variantId=" + variantId;
+
+            log.info("🌍 [EXTERNAL CALL] Fetching Product Details: {}", url);
+
+            ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
+                    url,
+                    HttpMethod.GET,
+                    null,
+                    new ParameterizedTypeReference<Map<String, Object>>() {}
+            );
+
+            log.info("⬅️ [EXTERNAL RESPONSE] Status: {}", response.getStatusCode());
+
+            if (response.getBody() == null || !(boolean) response.getBody().get("success")) {
+                log.warn("⚠️ [EXTERNAL FAIL] Response body empty or success=false");
+                return null;
+            }
+
+            Map<String, Object> data = (Map<String, Object>) response.getBody().get("data");
+            List<Map<String, Object>> sellers = (List<Map<String, Object>>) data.get("sellers");
+
+            log.info("🔎 [PARSING] Found {} sellers for product.", sellers != null ? sellers.size() : 0);
+
+            if (sellers != null) {
+                for (Map<String, Object> seller : sellers) {
+                    String sellerMerchantId = (String) seller.get("merchantId");
+
+                    log.info("   👉 Comparing Cart Merchant [{}] vs Product Merchant [{}]", merchantId, sellerMerchantId);
+
+                    if (merchantId.equalsIgnoreCase(sellerMerchantId)) { // Case-insensitive check
+                        log.info("   ✅ MATCH FOUND!");
+
+                        String imageUrl = "";
+                        List<String> images = (List<String>) data.get("imageUrls");
+                        if (images != null && !images.isEmpty()) {
+                            imageUrl = images.get(0);
+                        }
+
+                        return ProductSnapshot.builder()
+                                .name((String) data.get("name"))
+                                .price(Double.valueOf(seller.get("price").toString()))
+                                .stock(Integer.valueOf(seller.get("stock").toString()))
+                                .merchantName((String) seller.get("merchantName"))
+                                .imageUrl(imageUrl)
+                                .build();
+                    }
+                }
+            }
+            log.warn("⚠️ [MATCH FAIL] No matching merchant found in list.");
+            return null;
+
+        } catch (HttpClientErrorException e) {
+            log.error("❌ [EXTERNAL ERROR] Product Service Error: {} - {}", e.getStatusCode(), e.getResponseBodyAsString());
+            return null;
+        } catch (Exception e) {
+            log.error("❌ [INTERNAL ERROR] Failed to parse product data", e);
+            return null;
+        }
+    }
+
+    private void updateProductInventory(OrderItem item) {
+        try {
+            String cleanBase = productServiceUrl.endsWith("/")
+                    ? productServiceUrl.substring(0, productServiceUrl.length() - 1)
+                    : productServiceUrl;
+
+            String url = String.format(
+                    "%s/reduce-stock/%d?variantId=%s&merchantId=%s&quantity=%d",
+                    cleanBase,
+                    item.getProductId(),
+                    item.getVariantId(),
+                    item.getMerchantId(),
+                    item.getQuantity()
+            );
+
+            log.info("🌍 [INVENTORY UPDATE] Calling: {}", url);
+            restTemplate.put(url, null);
+            log.info("✅ [INVENTORY UPDATE] Success");
+
+        } catch (Exception e) {
+            log.error("❌ [INVENTORY FAIL] Could not update stock for Order Item: {}", item.getId(), e);
+        }
     }
 }

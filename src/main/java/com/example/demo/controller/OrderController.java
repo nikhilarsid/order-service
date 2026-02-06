@@ -21,7 +21,8 @@ public class OrderController {
     private final MerchantAnalyticsRepository analyticsRepository;
 
     @PostMapping("/add")
-    public ResponseEntity<ApiResponse<Long>> checkout() {
+    public ResponseEntity<ApiResponse<String>> placeOrder() {
+        // Now this works because checkout() returns a String
         return ResponseEntity.ok(ApiResponse.success(orderService.checkout(), "Order placed successfully"));
     }
 
@@ -31,7 +32,7 @@ public class OrderController {
     }
 
     @GetMapping("/viewItem/{itemId}")
-    public ResponseEntity<ApiResponse<OrderItemDetailResponse>> viewItem(@PathVariable Long itemId) {
+    public ResponseEntity<ApiResponse<com.example.demo.dto.response.OrderItemDto>> viewItem(@PathVariable Long itemId) {
         // Fix: Call getOrderItemDetail and return the DTO type
         return ResponseEntity.ok(ApiResponse.success(orderService.getOrderItemDetail(itemId), "Item details fetched"));
     }
