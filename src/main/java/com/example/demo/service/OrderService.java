@@ -6,10 +6,12 @@ import com.example.demo.dto.response.ProductSnapshot;
 import com.example.demo.entity.CartItem;
 import com.example.demo.entity.Order;
 import com.example.demo.entity.OrderItem;
+import com.example.demo.entity.MerchantAnalytics; // Added
 import com.example.demo.enums.OrderStatus;
 import com.example.demo.repository.CartItemRepository;
 import com.example.demo.repository.OrderItemRepository;
 import com.example.demo.repository.OrderRepository;
+import com.example.demo.repository.MerchantAnalyticsRepository; // Added
 import com.example.demo.security.User;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,6 +39,7 @@ public class OrderService {
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
     private final CartItemRepository cartItemRepository;
+    private final MerchantAnalyticsRepository merchantAnalyticsRepository; // Added
     private final RestTemplate restTemplate;
 
     @Value("${integration.product-service.url}")
@@ -103,6 +106,9 @@ public class OrderService {
 
             totalAmount += (productData.getPrice() * cartItem.getQuantity());
 
+            // ✅ NEW: Update Merchant Analytics
+            updateMerchantAnalytics(orderItem);
+
             // D. Update Inventory (Call Product Service)
             updateProductInventory(orderItem);
         }
@@ -118,6 +124,34 @@ public class OrderService {
         return order.getOrderNumber();
     }
 
+    // ✅ NEW: Added method to update merchant statistics
+    private void updateMerchantAnalytics(OrderItem item) {
+        log.info("📊 [ANALYTICS] Updating stats for Merchant: {}", item.getMerchantId());
+
+        MerchantAnalytics stats = merchantAnalyticsRepository
+                .findByMerchantIdAndProductIdAndVariantId(
+                        item.getMerchantId(),
+                        item.getProductId(),
+                        item.getVariantId()
+                )
+                .orElseGet(() -> {
+                    log.info("📊 [ANALYTICS] Creating new record for Merchant: {}", item.getMerchantId());
+                    return MerchantAnalytics.builder()
+                            .merchantId(item.getMerchantId())
+                            .productId(item.getProductId())
+                            .variantId(item.getVariantId())
+                            .numberOfOrdersSold(0)
+                            .amountGenerated(0.0)
+                            .build();
+                });
+
+        stats.setNumberOfOrdersSold(stats.getNumberOfOrdersSold() + item.getQuantity());
+        stats.setAmountGenerated(stats.getAmountGenerated() + (item.getPrice() * item.getQuantity()));
+
+        merchantAnalyticsRepository.save(stats);
+        log.info("✅ [ANALYTICS] Success for Merchant: {}", item.getMerchantId());
+    }
+
     @Transactional(readOnly = true)
     public List<OrderResponse> getOrderHistory() {
         User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
@@ -126,7 +160,6 @@ public class OrderService {
         return orders.stream().map(this::mapToOrderResponse).collect(Collectors.toList());
     }
 
-    // ✅ NEW: Added this method to fix your error
     @Transactional(readOnly = true)
     public OrderItemDto getOrderItemDetail(Long itemId) {
         OrderItem item = orderItemRepository.findById(itemId)
@@ -178,27 +211,17 @@ public class OrderService {
                     new ParameterizedTypeReference<Map<String, Object>>() {}
             );
 
-            log.info("⬅️ [EXTERNAL RESPONSE] Status: {}", response.getStatusCode());
-
             if (response.getBody() == null || !(boolean) response.getBody().get("success")) {
-                log.warn("⚠️ [EXTERNAL FAIL] Response body empty or success=false");
                 return null;
             }
 
             Map<String, Object> data = (Map<String, Object>) response.getBody().get("data");
             List<Map<String, Object>> sellers = (List<Map<String, Object>>) data.get("sellers");
 
-            log.info("🔎 [PARSING] Found {} sellers for product.", sellers != null ? sellers.size() : 0);
-
             if (sellers != null) {
                 for (Map<String, Object> seller : sellers) {
                     String sellerMerchantId = (String) seller.get("merchantId");
-
-                    log.info("   👉 Comparing Cart Merchant [{}] vs Product Merchant [{}]", merchantId, sellerMerchantId);
-
-                    if (merchantId.equalsIgnoreCase(sellerMerchantId)) { // Case-insensitive check
-                        log.info("   ✅ MATCH FOUND!");
-
+                    if (merchantId.equalsIgnoreCase(sellerMerchantId)) {
                         String imageUrl = "";
                         List<String> images = (List<String>) data.get("imageUrls");
                         if (images != null && !images.isEmpty()) {
@@ -215,7 +238,6 @@ public class OrderService {
                     }
                 }
             }
-            log.warn("⚠️ [MATCH FAIL] No matching merchant found in list.");
             return null;
 
         } catch (HttpClientErrorException e) {
