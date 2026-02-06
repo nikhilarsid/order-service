@@ -28,13 +28,8 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .authorizeHttpRequests(auth -> auth
-                        // Merchant/Admin specific endpoints
                         .requestMatchers("/api/orders/merchant/**").hasAnyAuthority("ROLE_MERCHANT", "ROLE_ADMIN")
-
-                        // ✅ Allows Spring to show the actual error message instead of a 403
                         .requestMatchers("/error").permitAll()
-
-                        // Everything else requires a valid token
                         .anyRequest().authenticated()
                 )
                 .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -46,8 +41,15 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        // Adjust these ports if your frontend runs on different addresses
-        configuration.setAllowedOrigins(List.of("http://localhost:5173", "http://localhost:5174", "http://localhost:3001"));
+
+        // ✅ Added the Vercel URL to the allowed origins list
+        configuration.setAllowedOrigins(List.of(
+                "http://localhost:5173",
+                "http://localhost:5174",
+                "http://localhost:3001",
+                "https://ecom-frontend-simpl.vercel.app"
+        ));
+
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type"));
         configuration.setAllowCredentials(true);
