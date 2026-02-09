@@ -24,9 +24,8 @@ public class OrderItem {
     private Integer quantity;
     private Double price;
 
-    @Column(name = "image_url", length = 2048)
+    @Column(columnDefinition = "TEXT")
     private String imageUrl;
-
     @ManyToOne
     @JoinColumn(name = "order_id")
     private Order order;
