@@ -24,7 +24,7 @@ public class OrderItem {
     private Integer quantity;
     private Double price;
 
-    @Column(name = "image_url", length = 1000)
+    @Column(name = "image_url", length = 2048)
     private String imageUrl;
 
     @ManyToOne
