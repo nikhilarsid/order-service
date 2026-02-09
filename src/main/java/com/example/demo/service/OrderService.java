@@ -111,6 +111,7 @@ public class OrderService {
             orderItem.setPrice(productData.getPrice());
             orderItem.setMerchantName(productData.getMerchantName());
             orderItem.setImageUrl(productData.getImageUrl());
+            orderItem.setProductName(productData.getName());
             orderItemRepository.save(orderItem);
             log.info("💾 [DB SAVE] OrderItem created - ID: {}", orderItem.getId());
 
@@ -167,6 +168,7 @@ public class OrderService {
                         .variantId(item.getVariantId())
                         .merchantName(item.getMerchantName())
                         .quantity(item.getQuantity())
+                        .productName(item.getProductName())
                         .price(item.getPrice())
                         .imageUrl(item.getImageUrl())
                         .build())
