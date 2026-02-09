@@ -162,6 +162,7 @@ public class OrderService {
     private OrderResponse mapToOrderResponse(Order order) {
         List<OrderItemDto> orderItems = order.getItems().stream()
                 .map(item -> OrderItemDto.builder()
+                        .itemId(item.getId())
                         .productId(item.getProductId())
                         .variantId(item.getVariantId())
                         .merchantName(item.getMerchantName())
