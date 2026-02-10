@@ -20,7 +20,7 @@ public class OrderItem {
 
     // ✅ NEW: Store the readable merchant name
     private String merchantName;
-    private String productName;
+
     private Integer quantity;
     private Double price;
 
