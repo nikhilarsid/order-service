@@ -184,6 +184,7 @@ public class OrderService {
                         .merchantName(item.getMerchantName())
                         .quantity(item.getQuantity())
                         .price(item.getPrice())
+                     .productName(item.getProductName())
                         .imageUrl(item.getImageUrl())
                         .build())
                 .collect(Collectors.toList());
