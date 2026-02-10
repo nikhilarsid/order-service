@@ -10,6 +10,9 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class OrderItemDto {
+    // ✅ NEW: Add this field
+    private Long itemId;
+    private String productName;
     private Integer productId;
     private String variantId;
     private String merchantName;

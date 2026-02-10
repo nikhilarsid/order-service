@@ -20,13 +20,12 @@ public class OrderItem {
 
     // ✅ NEW: Store the readable merchant name
     private String merchantName;
-
+    private String productName;
     private Integer quantity;
     private Double price;
 
-    @Column(name = "image_url", length = 1000)
+    @Column(columnDefinition = "TEXT")
     private String imageUrl;
-
     @ManyToOne
     @JoinColumn(name = "order_id")
     private Order order;
