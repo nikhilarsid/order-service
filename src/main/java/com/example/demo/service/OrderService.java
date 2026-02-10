@@ -22,13 +22,15 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
-
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+
+
+import com.example.demo.repository.MerchantAnalyticsRepository;
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -120,6 +122,7 @@ public class OrderService {
 
             // D. Update Inventory (Call Product Service)
             log.info("📊 [INVENTORY] Updating inventory for ProductID: {}", cartItem.getProductId());
+            updateMerchantAnalytics(orderItem);
             updateProductInventory(orderItem);
         }
 
