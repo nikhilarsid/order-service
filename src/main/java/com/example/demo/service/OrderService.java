@@ -102,6 +102,7 @@ public class OrderService {
             orderItem.setPrice(productData.getPrice());
             orderItem.setMerchantName(productData.getMerchantName());
             orderItem.setImageUrl(productData.getImageUrl());
+            orderItem.setProductName(productData.getName());
             orderItemRepository.save(orderItem);
 
             totalAmount += (productData.getPrice() * cartItem.getQuantity());
