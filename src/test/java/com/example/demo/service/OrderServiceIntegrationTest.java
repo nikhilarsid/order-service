@@ -13,10 +13,8 @@ import com.example.demo.security.User;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.MockedStatic;
-import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -28,10 +26,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.web.client.RestTemplate;
 
-import java.time.LocalDateTime;
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -102,25 +98,12 @@ class OrderServiceIntegrationTest {
                 .price(100.0)
                 .build();
 
-        Order order = Order.builder()
-                .id(1L)
-                .orderNumber("ORD-INTEGRATION-001")
-                .userId("user-integration-test")
-                .status(OrderStatus.CONFIRMED)
-                .items(new ArrayList<>())
-                .build();
-
-        OrderItem orderItem = OrderItem.builder()
-                .id(1L)
-                .productId(101)
-                .variantId("variant-1")
-                .merchantId("merchant-001")
-                .merchantName("TechStore")
-                .quantity(2)
-                .price(100.0)
-                .imageUrl("http://image.url/product.jpg")
-                .order(order)
-                .build();
+        // Use Answer to return the actual object passed to save, to simulate DB behavior
+        when(orderRepository.save(any(Order.class))).thenAnswer(i -> {
+            Order o = i.getArgument(0);
+            o.setId(1L);
+            return o;
+        });
 
         try (MockedStatic<SecurityContextHolder> mockedSecurityHolder = mockStatic(SecurityContextHolder.class)) {
             mockedSecurityHolder.when(SecurityContextHolder::getContext).thenReturn(securityContext);
@@ -151,15 +134,17 @@ class OrderServiceIntegrationTest {
             when(cartItemRepository.findByUserId("user-integration-test"))
                     .thenReturn(Collections.singletonList(savedCartItem));
 
-            when(orderRepository.save(any(Order.class))).thenReturn(order);
-            when(orderItemRepository.save(any(OrderItem.class))).thenReturn(orderItem);
+            when(orderItemRepository.save(any(OrderItem.class))).thenReturn(OrderItem.builder().id(1L).build());
 
             String orderNumber = orderService.checkout();
 
             // Assert
             assertNotNull(orderNumber);
-            assertEquals("ORD-INTEGRATION-001", orderNumber);
+            assertFalse(orderNumber.isEmpty());
+            // We removed assertEquals("ORD-...", ...) because the Service generates a random UUID.
+
             verify(cartItemRepository, times(1)).deleteAll(any());
+            verify(orderRepository, times(2)).save(any(Order.class)); // Once initially, once for total update
         }
     }
 
@@ -182,32 +167,31 @@ class OrderServiceIntegrationTest {
                 .userId("user-integration-test")
                 .productId(102)
                 .variantId("var-2")
-                .merchantId("merchant-002")
+                .merchantId("merchant-002") // Note: Merchant 002
                 .quantity(1)
                 .price(200.0)
                 .build();
 
         List<CartItem> cartItems = Arrays.asList(item1, item2);
 
-        Order savedOrder = Order.builder()
-                .id(1L)
-                .orderNumber("ORD-MULTI-001")
-                .userId("user-integration-test")
-                .status(OrderStatus.CONFIRMED)
-                .items(new ArrayList<>())
-                .build();
-
         try (MockedStatic<SecurityContextHolder> mockedSecurityHolder = mockStatic(SecurityContextHolder.class)) {
             mockedSecurityHolder.when(SecurityContextHolder::getContext).thenReturn(securityContext);
 
             when(cartItemRepository.findByUserId("user-integration-test")).thenReturn(cartItems);
-            when(orderRepository.save(any(Order.class))).thenReturn(savedOrder);
+            when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
 
-            // Mock product service responses for both items
+            // ✅ FIX 1: Mock Response for Item 1 (Merchant 001)
             ResponseEntity<Map<String, Object>> response1 = new ResponseEntity<>(
                     createProductServiceResponse(), HttpStatus.OK);
-            ResponseEntity<Map<String, Object>> response2 = new ResponseEntity<>(
-                    createProductServiceResponse(), HttpStatus.OK);
+
+            // ✅ FIX 2: Mock Response for Item 2 (Merchant 002) - CRITICAL FIX
+            Map<String, Object> productResponse2 = createProductServiceResponse();
+            Map<String, Object> data = (Map<String, Object>) productResponse2.get("data");
+            List<Map<String, Object>> sellers = (List<Map<String, Object>>) data.get("sellers");
+            sellers.get(0).put("merchantId", "merchant-002"); // Update merchant ID to match cart item
+            sellers.get(0).put("price", 200.0);
+
+            ResponseEntity<Map<String, Object>> response2 = new ResponseEntity<>(productResponse2, HttpStatus.OK);
 
             when(restTemplate.exchange(
                     contains("101"),
@@ -227,9 +211,10 @@ class OrderServiceIntegrationTest {
                     .thenReturn(OrderItem.builder().id(1L).build());
 
             // Act
-            orderService.checkout();
+            String orderNumber = orderService.checkout();
 
-            // Assert - verify 2 order items created
+            // Assert
+            assertNotNull(orderNumber);
             verify(orderItemRepository, times(2)).save(any(OrderItem.class));
             verify(cartItemRepository, times(1)).deleteAll(cartItems);
         }
@@ -259,29 +244,22 @@ class OrderServiceIntegrationTest {
 
         List<CartItem> cartItems = Arrays.asList(item1, item2);
 
-        Order savedOrder = Order.builder()
-                .id(1L)
-                .orderNumber("ORD-FAIL-001")
-                .userId("user-integration-test")
-                .status(OrderStatus.CONFIRMED)
-                .items(new ArrayList<>())
-                .build();
-
         try (MockedStatic<SecurityContextHolder> mockedSecurityHolder = mockStatic(SecurityContextHolder.class)) {
             mockedSecurityHolder.when(SecurityContextHolder::getContext).thenReturn(securityContext);
 
             when(cartItemRepository.findByUserId("user-integration-test")).thenReturn(cartItems);
-            when(orderRepository.save(any(Order.class))).thenReturn(savedOrder);
+            when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
 
             // Item 1 - OK
             ResponseEntity<Map<String, Object>> response1 = new ResponseEntity<>(
                     createProductServiceResponse(), HttpStatus.OK);
 
-            // Item 2 - Out of stock
+            // Item 2 - Out of stock AND Merchant Match
             Map<String, Object> response2Data = createProductServiceResponse();
             Map<String, Object> data = (Map<String, Object>) response2Data.get("data");
             List<Map<String, Object>> sellers = (List<Map<String, Object>>) data.get("sellers");
             sellers.get(0).put("stock", 2); // Only 2 in stock, requesting 10
+            sellers.get(0).put("merchantId", "merchant-002"); // Ensure merchant matches
 
             ResponseEntity<Map<String, Object>> response2 = new ResponseEntity<>(response2Data, HttpStatus.OK);
 
@@ -301,7 +279,7 @@ class OrderServiceIntegrationTest {
 
             // Act & Assert
             assertThrows(RuntimeException.class, () -> orderService.checkout());
-            
+
             // Verify cart was NOT cleared
             verify(cartItemRepository, never()).deleteAll(any());
         }
@@ -324,19 +302,11 @@ class OrderServiceIntegrationTest {
 
         List<CartItem> cartItems = Collections.singletonList(cartItem);
 
-        Order savedOrder = Order.builder()
-                .id(1L)
-                .orderNumber("ORD-ROLLBACK-001")
-                .userId("user-integration-test")
-                .status(OrderStatus.CONFIRMED)
-                .items(new ArrayList<>())
-                .build();
-
         try (MockedStatic<SecurityContextHolder> mockedSecurityHolder = mockStatic(SecurityContextHolder.class)) {
             mockedSecurityHolder.when(SecurityContextHolder::getContext).thenReturn(securityContext);
 
             when(cartItemRepository.findByUserId("user-integration-test")).thenReturn(cartItems);
-            when(orderRepository.save(any(Order.class))).thenReturn(savedOrder);
+            when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
 
             // Mock external service throwing exception
             when(restTemplate.exchange(
@@ -427,15 +397,7 @@ class OrderServiceIntegrationTest {
                 .variantId("var-1")
                 .merchantId("merchant-001")
                 .quantity(100)
-                .price(10.0)
-                .build();
-
-        Order savedOrder = Order.builder()
-                .id(1L)
-                .orderNumber("ORD-LARGE-001")
-                .userId("user-integration-test")
-                .status(OrderStatus.CONFIRMED)
-                .items(new ArrayList<>())
+                .price(10.0) // <--- Cart says 10.0
                 .build();
 
         try (MockedStatic<SecurityContextHolder> mockedSecurityHolder = mockStatic(SecurityContextHolder.class)) {
@@ -444,12 +406,16 @@ class OrderServiceIntegrationTest {
             when(cartItemRepository.findByUserId("user-integration-test"))
                     .thenReturn(Collections.singletonList(item));
 
-            when(orderRepository.save(any(Order.class))).thenReturn(savedOrder);
+            when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
 
+            // Setup Mock Response
             Map<String, Object> productResponse = createProductServiceResponse();
             Map<String, Object> data = (Map<String, Object>) productResponse.get("data");
             List<Map<String, Object>> sellers = (List<Map<String, Object>>) data.get("sellers");
+
+            // ✅ FIX: Update BOTH Stock and Price to match the test scenario
             sellers.get(0).put("stock", 500);
+            sellers.get(0).put("price", 10.0); // <--- Mock Service must also say 10.0
 
             ResponseEntity<Map<String, Object>> responseEntity = new ResponseEntity<>(productResponse, HttpStatus.OK);
 
@@ -468,12 +434,12 @@ class OrderServiceIntegrationTest {
 
             // Assert
             assertNotNull(orderNumber);
-            assertEquals("ORD-LARGE-001", orderNumber);
+            assertFalse(orderNumber.isEmpty());
 
-            // Verify order total is correct: 100 * 10 = 1000
+            // Verify order total is correct: 100 * 10.0 = 1000.0
             ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
             verify(orderRepository, times(2)).save(orderCaptor.capture());
-            
+
             Order finalOrder = orderCaptor.getAllValues().get(1);
             assertEquals(1000.0, finalOrder.getTotalAmount());
         }
@@ -492,21 +458,13 @@ class OrderServiceIntegrationTest {
                 .price(19.99)
                 .build();
 
-        Order savedOrder = Order.builder()
-                .id(1L)
-                .orderNumber("ORD-DECIMAL-001")
-                .userId("user-integration-test")
-                .status(OrderStatus.CONFIRMED)
-                .items(new ArrayList<>())
-                .build();
-
         try (MockedStatic<SecurityContextHolder> mockedSecurityHolder = mockStatic(SecurityContextHolder.class)) {
             mockedSecurityHolder.when(SecurityContextHolder::getContext).thenReturn(securityContext);
 
             when(cartItemRepository.findByUserId("user-integration-test"))
                     .thenReturn(Collections.singletonList(item));
 
-            when(orderRepository.save(any(Order.class))).thenReturn(savedOrder);
+            when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
 
             Map<String, Object> productResponse = createProductServiceResponse();
             Map<String, Object> data = (Map<String, Object>) productResponse.get("data");
@@ -526,12 +484,13 @@ class OrderServiceIntegrationTest {
                     .thenReturn(OrderItem.builder().id(1L).build());
 
             // Act
-            orderService.checkout();
+            String orderNumber = orderService.checkout();
+            assertNotNull(orderNumber);
 
             // Assert - verify correct decimal handling (3 * 19.99 = 59.97)
             ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
             verify(orderRepository, times(2)).save(orderCaptor.capture());
-            
+
             Order finalOrder = orderCaptor.getAllValues().get(1);
             assertEquals(59.97, finalOrder.getTotalAmount(), 0.01);
         }
@@ -547,6 +506,7 @@ class OrderServiceIntegrationTest {
         data.put("name", "Test Product");
         data.put("imageUrls", Collections.singletonList("http://image.url/product.jpg"));
 
+        // Default to Merchant-001
         Map<String, Object> seller = new HashMap<>();
         seller.put("merchantId", "merchant-001");
         seller.put("merchantName", "TechStore");
