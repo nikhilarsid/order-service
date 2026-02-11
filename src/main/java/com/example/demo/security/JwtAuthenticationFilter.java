@@ -28,7 +28,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         final String authHeader = request.getHeader("Authorization");
         final String jwt;
         final String userEmail;
-
+        
         // ✅ LOG 1: Prove the request hit the server
         log.info("🛡️ [FILTER] Request Received: {} {}", request.getMethod(), request.getRequestURI());
 
@@ -42,6 +42,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             jwt = authHeader.substring(7);
             userEmail = jwtService.extractUsername(jwt);
             String rawRole = jwtService.extractRole(jwt);
+            String userId = jwtService.extractClaim(jwt, claims -> claims.get("userId", String.class));
 
             log.info("👤 [FILTER] Token Decoded. User: {}, Role: {}", userEmail, rawRole);
 
@@ -54,8 +55,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
                     log.info("✅ [FILTER] Authenticating User with Authority: {}", formattedRole);
 
-                    User user = User.builder().email(userEmail).role(rawRole).build();
-
+                    User user = User.builder()
+                    .id(userId)  // <--- CRITICAL FIX
+                    .email(userEmail)
+                    .role(rawRole)
+                    .build();
                     UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
                             user,
                             null,
