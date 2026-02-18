@@ -22,14 +22,14 @@ public class CartController {
         log.info("📢 [CONTROLLER] Received AddToCart Request: ProductID={}, VariantID={}, MerchantID={}",
                 request.getProductId(), request.getVariantId(), request.getMerchantId());
 
-        try {
+//        try {
             cartService.addToCart(request);
             log.info("✅ [CONTROLLER] Item added successfully");
             return ResponseEntity.ok(ApiResponse.success(null, "Item added to cart"));
-        } catch (Exception e) {
-            log.error("❌ [CONTROLLER] Error adding item to cart: ", e);
-            throw e; // Re-throw to be handled by GlobalExceptionHandler
-        }
+//        } catch (Exception e) {
+//            log.error("❌ [CONTROLLER] Error adding item to cart: ", e);
+//            throw e; // Re-throw to be handled by GlobalExceptionHandler
+//        }
     }
 
     @GetMapping("/view")

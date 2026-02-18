@@ -23,6 +23,23 @@ public class GlobalExceptionHandler {
     /**
      * Handle ResourceNotFoundException
      */
+    @ExceptionHandler(PurchaseLimitException.class)
+    public ResponseEntity<ErrorResponse> handlePurchaseLimitException(
+            PurchaseLimitException ex,
+            WebRequest request) {
+
+        log.error("❌ Purchase Limit Exceeded: {}", ex.getMessage());
+
+        ErrorResponse errorResponse = ErrorResponse.builder()
+                .message(ex.getMessage()) // This will send "Cannot buy more than 5 items..."
+                .errorCode("PURCHASE_LIMIT_EXCEEDED")
+                .httpStatus(HttpStatus.BAD_REQUEST.value()) // This changes 500 to 400
+                .timestamp(LocalDateTime.now())
+                .path(request.getDescription(false).replace("uri=", ""))
+                .build();
+
+        return new ResponseEntity<>(errorResponse, HttpStatus.BAD_REQUEST);
+    }
     @ExceptionHandler(ResourceNotFoundException.class)
     public ResponseEntity<ErrorResponse> handleResourceNotFoundException(
             ResourceNotFoundException ex,

@@ -1,5 +1,7 @@
 package com.example.demo.service;
 
+import com.example.demo.dto.request.CheckoutRequest;
+import com.example.demo.dto.response.CheckoutResponse;
 import com.example.demo.dto.response.OrderItemDto;
 import com.example.demo.dto.response.OrderResponse;
 import com.example.demo.dto.response.ProductSnapshot;
@@ -8,6 +10,7 @@ import com.example.demo.entity.Order;
 import com.example.demo.entity.OrderItem;
 import com.example.demo.entity.MerchantAnalytics; // Added
 import com.example.demo.enums.OrderStatus;
+import com.example.demo.enums.PaymentStatus;
 import com.example.demo.repository.CartItemRepository;
 import com.example.demo.repository.OrderItemRepository;
 import com.example.demo.repository.OrderRepository;
@@ -24,8 +27,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -46,7 +51,7 @@ public class OrderService {
     private String productServiceUrl;
 
     @Transactional
-    public String checkout() {
+    public CheckoutResponse checkout(CheckoutRequest request) {
         User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
         log.info("🛒 [CHECKOUT] Starting checkout for user: {}", user.getEmail());
 
@@ -56,12 +61,68 @@ public class OrderService {
             throw new RuntimeException("Cart is empty");
         }
 
+        String added_address = request.getAddress();
+        // Get the list
+//        if(user.getAddresses() == null)
+//            user.setAddresses(new ArrayList<>());
+//        List<String> addresses_current = user.getAddresses();
+//        for (String address : user.getAddresses()) {
+//            System.out.println(address);
+//        }
+// Always check for null before using!
+//        if (addresses_current == null) {
+//            addresses_current = new ArrayList<>();
+//        }
+
+//        if(addresses_current.contains(added_address)) {}
+        if(false){}
+        else {
+            RestTemplate restTemplate = new RestTemplate();
+            String url = "http://localhost:8060/api/auth/addAddress";
+            String finalUrl = UriComponentsBuilder.fromHttpUrl(url)
+                    .queryParam("email", user.getEmail())
+                    .queryParam("address", added_address)
+                    .toUriString();
+            // Build the URL with RequestParams
+            try {
+                ResponseEntity<Void> response = restTemplate.postForEntity(finalUrl, null, Void.class);
+                if (response.getStatusCode().is2xxSuccessful()) {
+                    System.out.println("SUCCESS: Address added. Status: " + response.getStatusCode());
+                } else {
+                    // This handles 4xx or 5xx errors if they don't throw an exception immediately
+                    System.out.println("WARNING: Request sent but failed. Status: " + response.getStatusCode());
+                }
+
+            } catch (org.springframework.web.client.HttpClientErrorException e) {
+                // Catch 4xx errors (e.g., 404 Not Found, 400 Bad Request)
+                System.err.println("CLIENT ERROR: " + e.getStatusCode());
+                System.err.println("Response Body: " + e.getResponseBodyAsString());
+            } catch (org.springframework.web.client.HttpServerErrorException e) {
+                // Catch 5xx errors (e.g., 500 Internal Server Error)
+                System.err.println("SERVER ERROR: " + e.getStatusCode());
+            } catch (Exception e) {
+                // Catch Network issues (Connection refused, Timeout)
+                System.err.println("NETWORK ERROR: Auth Service might be down. " + e.getMessage());
+            }
+//            addresses_current.add(added_address);
+            try {
+                // Since the controller returns void, we use postForEntity with String or Object
+                restTemplate.postForEntity(finalUrl, null, Void.class);
+                System.out.println("Address added successfully to Auth service.");
+            } catch (Exception e) {
+                System.err.println("Failed to add address: " + e.getMessage());
+            }
+        }
         // 1. Initialize Order
         Order order = new Order();
         order.setOrderNumber(UUID.randomUUID().toString());
         order.setUserId(user.getId());
         order.setOrderDate(LocalDateTime.now());
         order.setTotalAmount(0.0);
+        order.setFirstName(request.getFirstName());
+        order.setLastName(request.getLastName());
+        order.setAddress(added_address);
+        order.setPaymentStatus(PaymentStatus.valueOf(request.getPaymentStatus()));
         order.setStatus(OrderStatus.CONFIRMED);
         orderRepository.save(order);
 
@@ -122,7 +183,8 @@ public class OrderService {
         cartItemRepository.deleteAll(cartItems);
         log.info("🎉 [CHECKOUT] Order Placed Successfully! Order Number: {}", order.getOrderNumber());
 
-        return order.getOrderNumber();
+        CheckoutResponse resp = new CheckoutResponse(order.getOrderNumber(),added_address);
+        return resp;
     }
 
     // ✅ NEW: Added method to update merchant statistics
@@ -194,8 +256,12 @@ public class OrderService {
                 .orderNumber(order.getOrderNumber())
                 .orderDate(order.getOrderDate())
                 .totalAmount(order.getTotalAmount())
-                .status(order.getStatus().toString())
+                .status(order.getStatus())
                 .items(orderItems)
+                .paymentStatus(order.getPaymentStatus())
+                .address(order.getAddress())
+                .firstName(order.getFirstName())
+                .lastName(order.getLastName())
                 .build();
     }
 

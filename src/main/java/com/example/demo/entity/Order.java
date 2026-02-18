@@ -23,6 +23,8 @@ public class Order {
     private String orderNumber;
     private LocalDateTime orderDate;
     private Double totalAmount;
+    private String firstName;
+    private String lastName;
 
     @Enumerated(EnumType.STRING)
     private OrderStatus status;

@@ -1,5 +1,6 @@
 package com.example.demo.controller;
 
+import com.example.demo.dto.request.CheckoutRequest;
 import com.example.demo.dto.response.ApiResponse;
 import com.example.demo.dto.response.OrderResponse;
 import com.example.demo.dto.response.OrderItemDetailResponse; // Ensure this is imported
@@ -21,9 +22,9 @@ public class OrderController {
     private final MerchantAnalyticsRepository analyticsRepository;
 
     @PostMapping("/add")
-    public ResponseEntity<ApiResponse<String>> placeOrder() {
-        // Now this works because checkout() returns a String
-        return ResponseEntity.ok(ApiResponse.success(orderService.checkout(), "Order placed successfully"));
+    public ResponseEntity<ApiResponse<String>> placeOrder(@RequestBody CheckoutRequest request) {
+//        orderService.checkout(request);
+        return ResponseEntity.ok(ApiResponse.success(orderService.checkout(request).getOrderNo(),"Order placed successfully"));
     }
 
     @GetMapping("/view")

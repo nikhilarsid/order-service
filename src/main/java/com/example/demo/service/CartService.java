@@ -4,6 +4,7 @@ import com.example.demo.dto.request.AddToCartRequest;
 import com.example.demo.dto.response.CartItemDTO;
 import com.example.demo.dto.response.CartResponse;
 import com.example.demo.entity.CartItem;
+import com.example.demo.exception.PurchaseLimitException;
 import com.example.demo.repository.CartItemRepository;
 import com.example.demo.security.User;
 import lombok.RequiredArgsConstructor;
@@ -17,8 +18,10 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import javax.management.RuntimeErrorException;
 import java.util.*;
 import java.util.stream.Collectors;
+
 
 @Service
 @RequiredArgsConstructor
@@ -29,7 +32,7 @@ public class CartService {
     private final RestTemplate restTemplate;
 
     // Ensure this URL is correct (use http://localhost:8095/api/v1/products/ if running locally)
-    private final String PRODUCT_SERVICE_URL = "https://product-service-jzzf.onrender.com/api/v1/products/";
+    private final String PRODUCT_SERVICE_URL = "http://localhost:8063/api/v1/products/";
 
     @Transactional
     public void addToCart(AddToCartRequest request) {
@@ -86,7 +89,15 @@ public class CartService {
             throw new RuntimeException("Could not find merchant for the selected product/variant.");
         }
 
-        if (request.getQuantity() > availableStock) {
+        Optional<CartItem> existingItemOpt = cartItemRepository.findByUserIdAndProductIdAndVariantId(
+                user.getId(), request.getProductId(), request.getVariantId());
+
+        int alreadyIn = existingItemOpt.map(CartItem::getQuantity).orElse(0);
+        int toAdd = request.getQuantity();
+        int toCheck = toAdd + alreadyIn;
+        if(toCheck > 5)
+            throw new PurchaseLimitException("Cannot buy more than 5 items of same product");
+        if (toCheck > availableStock) {
             log.warn("⚠️ [SERVICE] Insufficient Stock. Requested: {}, Available: {}", request.getQuantity(), availableStock);
             throw new RuntimeException("Stock not available. Only " + availableStock + " items left.");
         }
